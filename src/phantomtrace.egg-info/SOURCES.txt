@@ -1,0 +1,7 @@
+README.md
+pyproject.toml
+src/phantomtrace.egg-info/PKG-INFO
+src/phantomtrace.egg-info/SOURCES.txt
+src/phantomtrace.egg-info/dependency_links.txt
+src/phantomtrace.egg-info/requires.txt
+src/phantomtrace.egg-info/top_level.txt

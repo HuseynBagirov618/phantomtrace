@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: phantomtrace
+Version: 0.1.0
+Summary: Evidence-driven cyberattack reconstruction MVP
+Requires-Python: >=3.11
+Requires-Dist: fastapi==0.115.0
+Requires-Dist: uvicorn==0.30.6
+Requires-Dist: pydantic==2.8.2
+Requires-Dist: pytest==8.3.2
+Requires-Dist: python-evtx==0.7.4
+Requires-Dist: networkx==3.3
