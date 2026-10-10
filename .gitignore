@@ -7,3 +7,5 @@ data/
 *.pcap
 *.zip
 .env
+*.egg-info/
+src/*.egg-info/
