@@ -16,7 +16,10 @@ def make_event(event_id="4104", message_number="1",
         "event_data": [
             {
                 "name": "ScriptBlockText",
-                "value": 'Write-Output "PhantomTrace Scenario M Encoded Test"'
+                "value": (
+                    'Write-Output "PhantomTrace Scenario M '
+                    'Encoded Test"'
+                )
             },
             {
                 "name": "ScriptBlockId",
@@ -38,11 +41,18 @@ def test_script_block_normalization():
     result = normalize_powershell_event(make_event())
 
     assert result["event_type"] == "powershell_script_block"
-    assert result["event_id"] == 4104
-    assert "PhantomTrace Scenario M" in result["script_text"]
-    assert result["record_id"] == "492"
-    assert result["timestamp_utc"].endswith("+00:00")
-    assert result["is_fragmented"] is False
+    assert result["event.code"] == "4104"
+    assert "PhantomTrace Scenario M" in (
+        result["powershell.script_text"]
+    )
+    assert result["winlog.record_id"] == "492"
+    assert result["@timestamp"].endswith("+00:00")
+    assert result["timestamp_original"] == (
+        "2026-10-16 20:23:24.892498"
+    )
+    assert result["powershell.fragmented"] is False
+    assert result["powershell.message_number"] == 1
+    assert result["powershell.message_total"] == 1
 
 
 def test_fragmented_script_block():
@@ -50,9 +60,9 @@ def test_fragmented_script_block():
         make_event(message_number="2", message_total="3")
     )
 
-    assert result["message_number"] == 2
-    assert result["message_total"] == 3
-    assert result["is_fragmented"] is True
+    assert result["powershell.message_number"] == 2
+    assert result["powershell.message_total"] == 3
+    assert result["powershell.fragmented"] is True
 
 
 def test_unsupported_event():
@@ -67,6 +77,10 @@ def test_missing_optional_fields():
 
     result = normalize_powershell_event(event)
 
-    assert result["script_text"] is None
-    assert result["script_block_id"] is None
-    assert result["message_number"] is None
+    assert result["powershell.script_text"] is None
+    assert result["powershell.script_block_id"] is None
+    assert result["powershell.message_number"] is None
+    assert (
+        "missing field: powershell.script_text"
+        in result["pt"]["parse_warnings"]
+    )

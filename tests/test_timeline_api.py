@@ -9,6 +9,9 @@ from phantomtrace.evidence.storage import EvidenceStorage
 from phantomtrace.ingestion import service as ingestion_module
 
 
+RAW_XML = "<Event><System><EventID>4625</EventID></System></Event>"
+
+
 @pytest.fixture
 def environment(tmp_path, monkeypatch):
     db = PhantomTraceDB(str(tmp_path / "test.db"))
@@ -63,6 +66,7 @@ def fake_evtx_parser(path):
                     "value": "3",
                 },
             ],
+            "raw_xml": RAW_XML,
         }
 
 
@@ -81,6 +85,7 @@ def test_ingest_and_retrieve_timeline(environment, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["inserted_events"] == 2
+    assert response.json()["raw_records_inserted"] == 2
 
     timeline_response = client.get(
         "/cases/TEST-001/timeline"
@@ -93,8 +98,22 @@ def test_ingest_and_retrieve_timeline(environment, monkeypatch):
     assert result["total_events"] == 2
     assert len(result["events"]) == 2
 
-    assert result["events"][0]["record_id"] == "100"
-    assert result["events"][1]["record_id"] == "101"
+    first = result["events"][0]
+    second = result["events"][1]
+
+    assert first["winlog.record_id"] == "100"
+    assert second["winlog.record_id"] == "101"
+
+    assert first["event.code"] == "4625"
+    assert first["event.outcome"] == "failure"
+    assert first["@timestamp"].endswith("+00:00")
+    assert first["host.name"] == "TEST-VM"
+    assert first["source.ip"] == "192.168.14.128"
+
+    # Every timeline row must point at its raw record.
+    assert first["raw_ref"] == f"{sha256}:Security:100"
+    assert len(first["event_id"]) == 64
+    assert "100" in first["raw_ref"]
 
     assert all(
         event["evidence_sha256"] == sha256
@@ -125,6 +144,7 @@ def test_duplicate_ingestion(environment, monkeypatch):
     assert first.json()["inserted_events"] == 2
     assert second.json()["inserted_events"] == 0
     assert second.json()["duplicate_events"] == 2
+    assert second.json()["raw_records_inserted"] == 0
 
 
 def test_timeline_pagination(environment, monkeypatch):
@@ -148,7 +168,9 @@ def test_timeline_pagination(environment, monkeypatch):
     assert response.status_code == 200
     assert response.json()["total_events"] == 2
     assert len(response.json()["events"]) == 1
-    assert response.json()["events"][0]["record_id"] == "101"
+    assert response.json()["events"][0]["winlog.record_id"] == (
+        "101"
+    )
 
 
 def test_missing_case_returns_404(environment):

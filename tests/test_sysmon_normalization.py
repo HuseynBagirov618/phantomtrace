@@ -23,20 +23,35 @@ def test_process_creation():
     event = make_event(1, {
         "ProcessGuid": "{process-001}",
         "ProcessId": "4992",
-        "Image": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+        "Image": (
+            r"C:\Windows\System32\WindowsPowerShell\v1.0"
+            r"\powershell.exe"
+        ),
         "CommandLine": "powershell.exe -NoProfile",
         "ParentProcessGuid": "{parent-001}",
+        "ParentImage": r"C:\Windows\explorer.exe",
         "User": r"TEST-VM\Stark",
-        "LogonId": "0x1e169",
+        "LogonId": "0x1E169",
     })
 
     result = normalize_sysmon_event(event)
 
     assert result["event_type"] == "process_creation"
-    assert result["process_guid"] == "{process-001}"
-    assert result["parent_process_guid"] == "{parent-001}"
-    assert result["command_line"] == "powershell.exe -NoProfile"
-    assert result["logon_id"] == "0x1e169"
+    assert result["event.code"] == "1"
+    assert result["process.entity_id"] == "{process-001}"
+    assert result["process.parent.entity_id"] == (
+        "{parent-001}"
+    )
+    assert result["process.command_line"] == (
+        "powershell.exe -NoProfile"
+    )
+    assert result["process.parent.executable"].endswith(
+        "explorer.exe"
+    )
+    # Sysmon LogonId is a scoped hex key.
+    assert result["process.logon.id"] == "0x1e169"
+    assert result["winlog.record_id"] == "100"
+    assert result["pt"]["parse_warnings"] == []
 
 
 def test_file_creation():
@@ -44,16 +59,21 @@ def test_file_creation():
         "ProcessGuid": "{process-001}",
         "ProcessId": "4992",
         "Image": "powershell.exe",
-        "TargetFilename": r"C:\Users\Stark\Downloads\test.cmd",
+        "TargetFilename": (
+            r"C:\Users\Stark\AppData\Local\Temp\test.cmd"
+        ),
         "CreationUtcTime": "2026-10-16 20:00:01.000",
     })
 
     result = normalize_sysmon_event(event)
 
     assert result["event_type"] == "file_creation"
-    assert result["target_filename"].endswith("test.cmd")
-    assert result["creation_utc_time"] == "2026-10-16 20:00:01.000"
-    
+    assert result["event.code"] == "11"
+    assert result["file.path"].endswith("test.cmd")
+    assert result["file.creation_utc_time"] == (
+        "2026-10-16 20:00:01.000"
+    )
+
 
 def test_unsupported_event():
     event = make_event(3, {})
@@ -68,6 +88,10 @@ def test_missing_optional_fields():
 
     result = normalize_sysmon_event(event)
 
-    assert result["process_guid"] == "{process-002}"
-    assert result["command_line"] is None
-    assert result["parent_process_guid"] is None
+    assert result["process.entity_id"] == "{process-002}"
+    assert result["process.command_line"] is None
+    assert result["process.parent.entity_id"] is None
+    assert (
+        "missing field: process.parent.entity_id"
+        in result["pt"]["parse_warnings"]
+    )

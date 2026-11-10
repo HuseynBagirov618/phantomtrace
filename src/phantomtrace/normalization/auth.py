@@ -1,4 +1,11 @@
-from datetime import datetime, timezone
+from phantomtrace.normalization.common import (
+    event_data_fields,
+    missing_field,
+    normalize_hex_identifier,
+    normalize_ip,
+    normalize_text,
+    normalize_timestamp,
+)
 
 
 LOGON_TYPES = {
@@ -14,72 +21,52 @@ LOGON_TYPES = {
 }
 
 
-def normalize_timestamp(value):
-    """
-    Normalize a UTC EVTX timestamp into ISO 8601.
-
-    The current parser provides timestamps without a
-    timezone suffix. EVTX SystemTime is defined in UTC.
-    """
-    if value is None:
-        return None
-
-    dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-
-    return dt.astimezone(timezone.utc).isoformat()
-
-
 def normalize_auth_event(event):
+    """Normalize Windows Security events 4624 and 4625.
+
+    Returns None for unsupported event IDs. The global event ID is a
+    number; the record identity hash is added by the ingestion service.
     """
-    Normalize Windows Security events 4624 and 4625.
+    event_code = str(event["event_id"])
 
-    Returns None for unsupported event IDs.
-    """
-
-    event_id = str(event["event_id"])
-
-    if event_id not in ("4624", "4625"):
+    if event_code not in ("4624", "4625"):
         return None
 
-    fields = {
-        item["name"]: item["value"]
-        for item in event.get("event_data", [])
-        if item.get("name")
-    }
+    fields = event_data_fields(event)
 
-    logon_type = fields.get("LogonType")
+    timestamp = normalize_timestamp(event.get("timestamp"))
+    logon_id = normalize_hex_identifier(fields.get("TargetLogonId"))
+    logon_type = normalize_text(fields.get("LogonType"))
+    source_ip = normalize_ip(fields.get("IpAddress"))
+    username = normalize_text(fields.get("TargetUserName"))
 
-    source_ip = fields.get("IpAddress")
-
-    if source_ip in ("-", "", None):
-        source_ip = None
+    warnings = []
+    missing_field(warnings, "@timestamp", timestamp)
+    missing_field(warnings, "winlog.logon.id", logon_id)
+    missing_field(warnings, "user.name", username)
 
     return {
         "event_type": "authentication",
-        "event_id": int(event_id),
-        "outcome": (
-            "success" if event_id == "4624"
-            else "failure"
+        "event.code": event_code,
+        "event.outcome": (
+            "success" if event_code == "4624" else "failure"
         ),
-        "timestamp_utc": normalize_timestamp(
-            event["timestamp"]
-        ),
-        "computer": event["computer"],
-        "provider": event["provider"],
-        "channel": event["channel"],
-        "record_id": event["record_id"],
-        "source_file": event["source_file"],
-        "username": fields.get("TargetUserName"),
-        "domain": fields.get("TargetDomainName"),
-        "source_ip": source_ip,
-        "logon_type": logon_type,
-        "logon_type_name": LOGON_TYPES.get(
+        "@timestamp": timestamp,
+        "timestamp_original": event.get("timestamp"),
+        "host.name": normalize_text(event.get("computer")),
+        "winlog.channel": normalize_text(event.get("channel")),
+        "winlog.provider_name": normalize_text(event.get("provider")),
+        "winlog.record_id": normalize_text(event.get("record_id")),
+        "winlog.logon.id": logon_id,
+        "winlog.logon.type": logon_type,
+        "winlog.logon.type_name": LOGON_TYPES.get(
             logon_type, "Unknown"
         ),
-        "logon_id": fields.get("TargetLogonId"),
-        "status_code": fields.get("Status"),
-        "substatus_code": fields.get("SubStatus"),
+        "source.ip": source_ip,
+        "user.name": username,
+        "user.domain": normalize_text(fields.get("TargetDomainName")),
+        "error.code": normalize_text(fields.get("Status")),
+        "error.substatus": normalize_text(fields.get("SubStatus")),
+        "winlog.event_data": fields,
+        "pt": {"parse_warnings": warnings},
     }

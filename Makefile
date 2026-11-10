@@ -1,8 +1,8 @@
 test:
-	pytest
+	PYTHONPATH=src:. pytest
 
 run:
-	uvicorn apps.api.main:app --reload
+	PYTHONPATH=src:. uvicorn apps.api.main:app --reload
 
 demo:
 	@echo "Demo command will be implemented later."

@@ -37,11 +37,18 @@ def environment(tmp_path, monkeypatch):
         "TEST-001",
         sha256,
         {
-            "record_id": "5718",
-            "event_id": 1,
+            "event_id": f"{5718:064x}",
+            "raw_ref": (
+                f"{sha256}:"
+                "Microsoft-Windows-Sysmon/Operational:5718"
+            ),
+            "parser_version": "0.1.0",
+            "schema_version": "0.1.0",
+            "@timestamp": "2026-10-16T20:23:24+00:00",
+            "event.code": "1",
             "event_type": "process_creation",
-            "timestamp_utc": "2026-10-16T20:23:24+00:00",
-            "process_guid": "{test-process}",
+            "winlog.record_id": "5718",
+            "process.entity_id": "{test-process}",
         },
     )
 
@@ -64,7 +71,13 @@ def test_event_provenance(environment):
     assert result["evidence"]["sha256"] == sha256
     assert result["evidence"]["integrity_ok"] is True
     assert result["provenance"]["event_record_id"] == 5718
-    assert result["event"]["process_guid"] == "{test-process}"
+    assert result["event"]["process.entity_id"] == (
+        "{test-process}"
+    )
+    assert result["event"]["event.code"] == "1"
+    assert result["provenance"]["raw_ref"].endswith(
+        ":5718"
+    )
 
 
 def test_missing_event_returns_404(environment):

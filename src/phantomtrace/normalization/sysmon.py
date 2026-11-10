@@ -1,4 +1,10 @@
-from phantomtrace.normalization.auth import normalize_timestamp
+from phantomtrace.normalization.common import (
+    event_data_fields,
+    missing_field,
+    normalize_hex_identifier,
+    normalize_text,
+    normalize_timestamp,
+)
 
 
 SYSMON_EVENT_TYPES = {
@@ -8,61 +14,78 @@ SYSMON_EVENT_TYPES = {
 
 
 def normalize_sysmon_event(event):
-    """
-    Normalize Sysmon Event IDs 1 and 11.
+    """Normalize Sysmon Event IDs 1 and 11.
 
-    Preserve process identifiers and source provenance.
+    GUIDs are the join keys; PIDs and image paths stay supporting evidence.
     Return None for unsupported events.
     """
+    event_code = str(event["event_id"])
 
-    event_id = str(event["event_id"])
-
-    if event_id not in SYSMON_EVENT_TYPES:
+    if event_code not in SYSMON_EVENT_TYPES:
         return None
 
-    fields = {
-        item["name"]: item["value"]
-        for item in event.get("event_data", [])
-        if item.get("name")
-    }
+    fields = event_data_fields(event)
+
+    timestamp = normalize_timestamp(event.get("timestamp"))
+    process_guid = normalize_text(fields.get("ProcessGuid"))
 
     normalized = {
-        "event_type": SYSMON_EVENT_TYPES[event_id],
-        "event_id": int(event_id),
-        "timestamp_utc": normalize_timestamp(
-            event.get("timestamp")
+        "event_type": SYSMON_EVENT_TYPES[event_code],
+        "event.code": event_code,
+        "@timestamp": timestamp,
+        "timestamp_original": event.get("timestamp"),
+        "host.name": normalize_text(event.get("computer")),
+        "winlog.channel": normalize_text(event.get("channel")),
+        "winlog.provider_name": normalize_text(event.get("provider")),
+        "winlog.record_id": normalize_text(event.get("record_id")),
+        "process.entity_id": process_guid,
+        "process.pid": normalize_text(fields.get("ProcessId")),
+        "process.executable": normalize_text(fields.get("Image")),
+        "process.user.name": normalize_text(fields.get("User")),
+        "process.logon.id": normalize_hex_identifier(
+            fields.get("LogonId")
         ),
-        "computer": event.get("computer"),
-        "provider": event.get("provider"),
-        "channel": event.get("channel"),
-        "record_id": event.get("record_id"),
-        "source_file": event.get("source_file"),
-        "process_guid": fields.get("ProcessGuid"),
-        "process_id": fields.get("ProcessId"),
-        "image": fields.get("Image"),
-        "user": fields.get("User"),
+        "winlog.event_data": fields,
     }
 
-    if event_id == "1":
+    warnings = []
+    missing_field(warnings, "@timestamp", timestamp)
+    missing_field(warnings, "process.entity_id", process_guid)
+
+    if event_code == "1":
+        parent_guid = normalize_text(
+            fields.get("ParentProcessGuid")
+        )
+
         normalized.update({
-            "command_line": fields.get("CommandLine"),
-            "parent_process_guid": fields.get(
-                "ParentProcessGuid"
+            "process.command_line": normalize_text(
+                fields.get("CommandLine")
             ),
-            "parent_image": fields.get("ParentImage"),
-            "parent_command_line": fields.get(
-                "ParentCommandLine"
+            "process.parent.entity_id": parent_guid,
+            "process.parent.executable": normalize_text(
+                fields.get("ParentImage")
             ),
-            "logon_guid": fields.get("LogonGuid"),
-            "logon_id": fields.get("LogonId"),
+            "process.parent.command_line": normalize_text(
+                fields.get("ParentCommandLine")
+            ),
         })
 
-    elif event_id == "11":
+        missing_field(
+            warnings, "process.parent.entity_id", parent_guid
+        )
+
+    elif event_code == "11":
+        file_path = normalize_text(fields.get("TargetFilename"))
+
         normalized.update({
-            "target_filename": fields.get("TargetFilename"),
-            "creation_utc_time": fields.get(
-                "CreationUtcTime"
+            "file.path": file_path,
+            "file.creation_utc_time": normalize_text(
+                fields.get("CreationUtcTime")
             ),
         })
+
+        missing_field(warnings, "file.path", file_path)
+
+    normalized["pt"] = {"parse_warnings": warnings}
 
     return normalized

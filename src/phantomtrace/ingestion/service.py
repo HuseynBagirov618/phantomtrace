@@ -3,10 +3,13 @@ import re
 from datetime import datetime, timezone
 
 from phantomtrace.database.event_store import EventStore
+from phantomtrace.database.raw_store import RawRecordStore
 from phantomtrace.normalization.auth import normalize_auth_event
-from phantomtrace.normalization.sysmon import normalize_sysmon_event
 from phantomtrace.normalization.powershell import normalize_powershell_event
+from phantomtrace.normalization.sysmon import normalize_sysmon_event
 from phantomtrace.parsers.evtx_parser import parse_evtx
+from phantomtrace.schema.identity import build_event_id, record_locator
+from phantomtrace.schema.versions import PARSER_VERSION, SCHEMA_VERSION
 
 
 NORMALIZERS = {
@@ -17,12 +20,13 @@ NORMALIZERS = {
 
 
 class EvidenceIngestionService:
-    """Parse registered EVTX evidence and persist normalized events."""
+    """Parse registered EVTX evidence and persist custody plus events."""
 
     def __init__(self, db, storage):
         self.db = db
         self.storage = storage
         self.events = EventStore(db)
+        self.raw_records = RawRecordStore(db)
 
     def ingest(self, case_id, evidence_sha256):
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", case_id):
@@ -65,9 +69,12 @@ class EvidenceIngestionService:
         parsed_count = 0
         supported_count = 0
         inserted_count = 0
+        raw_inserted_count = 0
+        raw_duplicate_count = 0
 
-        # Parse and insert within one transaction. If parsing fails,
-        # SQLite rolls back the inserts made during this invocation.
+        # Raw records and normalized events are written in one
+        # transaction. If a record fails, SQLite rolls back the whole
+        # invocation so no half-parsed state survives.
         with self.db.connect() as conn:
             for raw_event in parse_evtx(str(evidence_path)):
                 parsed_count += 1
@@ -75,39 +82,73 @@ class EvidenceIngestionService:
                 # The stored file is named by its SHA-256; restore the
                 # registered original filename in normalized metadata.
                 raw_event["source_file"] = filename
+
+                record_number = self._record_number(raw_event)
+                channel = self._channel(raw_event)
+                raw_xml = raw_event.get("raw_xml")
+
+                if raw_xml is None or not str(raw_xml).strip():
+                    raise ValueError(
+                        "Parsed record "
+                        f"{record_number} has no raw XML"
+                    )
+
+                locator = record_locator(
+                    evidence_sha256,
+                    channel,
+                    record_number,
+                )
+
+                if self.raw_records.add_raw_record(
+                    case_id=case_id,
+                    file_sha256=evidence_sha256,
+                    channel=channel,
+                    record_number=record_number,
+                    raw_xml=raw_xml,
+                    conn=conn,
+                ):
+                    raw_inserted_count += 1
+                else:
+                    raw_duplicate_count += 1
+
                 event = normalizer(raw_event)
 
                 if event is None:
                     continue
 
                 supported_count += 1
-                if not event.get("timestamp_utc"):
-                    raise ValueError("Normalized event has no timestamp")
 
-                cursor = conn.execute(
-                    """
-                    INSERT OR IGNORE INTO event_records (
-                        case_id,
-                        evidence_sha256,
-                        record_id,
-                        event_id,
-                        event_type,
-                        timestamp_utc,
-                        normalized_json
+                if not event.get("@timestamp"):
+                    raise ValueError(
+                        "Normalized event has no timestamp"
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        case_id,
-                        evidence_sha256,
-                        int(event["record_id"]),
-                        int(event["event_id"]),
-                        event["event_type"],
-                        event["timestamp_utc"],
-                        json.dumps(event, ensure_ascii=False),
-                    ),
+
+                event["event_id"] = build_event_id(
+                    evidence_sha256,
+                    locator,
+                    PARSER_VERSION,
+                    SCHEMA_VERSION,
                 )
-                inserted_count += cursor.rowcount
+                event["raw_ref"] = locator
+                event["parser_version"] = PARSER_VERSION
+                event["schema_version"] = SCHEMA_VERSION
+
+                pt = event.setdefault("pt", {})
+                pt.setdefault("parse_warnings", [])
+                pt["evidence"] = {
+                    "sha256": evidence_sha256,
+                    "channel": channel,
+                    "record_number": record_number,
+                    "record_locator": locator,
+                }
+
+                if self.events.add_event(
+                    case_id,
+                    evidence_sha256,
+                    event,
+                    conn=conn,
+                ):
+                    inserted_count += 1
 
             conn.execute(
                 """
@@ -129,6 +170,10 @@ class EvidenceIngestionService:
                         "parsed": parsed_count,
                         "supported": supported_count,
                         "inserted": inserted_count,
+                        "raw_inserted": raw_inserted_count,
+                        "raw_duplicate": raw_duplicate_count,
+                        "parser_version": PARSER_VERSION,
+                        "schema_version": SCHEMA_VERSION,
                     }),
                 ),
             )
@@ -141,4 +186,26 @@ class EvidenceIngestionService:
             "supported_events": supported_count,
             "inserted_events": inserted_count,
             "duplicate_events": supported_count - inserted_count,
+            "raw_records_inserted": raw_inserted_count,
+            "raw_records_duplicate": raw_duplicate_count,
+            "parser_version": PARSER_VERSION,
+            "schema_version": SCHEMA_VERSION,
         }
+
+    @staticmethod
+    def _record_number(raw_event) -> int:
+        value = raw_event.get("record_id")
+
+        if value is None:
+            raise ValueError("Parsed record has no record number")
+
+        return int(value)
+
+    @staticmethod
+    def _channel(raw_event) -> str:
+        value = raw_event.get("channel")
+
+        if value is None or not str(value).strip():
+            return "unknown"
+
+        return str(value)

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from fastapi import Query
 from phantomtrace.database.event_store import EventStore
+from phantomtrace.database.raw_store import RawRecordStore
 from phantomtrace.ingestion.service import EvidenceIngestionService
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from fastapi import File, UploadFile
@@ -470,3 +471,73 @@ def get_evidence_event(
     result["evidence"]["integrity_ok"] = integrity_ok
 
     return result
+
+
+@app.get("/cases/{case_id}/events/{event_id}/raw")
+def get_event_raw(case_id: str, event_id: str):
+    """
+    Return the original raw record behind a normalized event,
+    with its custody hashes. Raw evidence reads are audited.
+    """
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", case_id):
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid case ID."
+        )
+
+    if not re.fullmatch(r"[a-fA-F0-9]{64}", event_id):
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid event ID."
+        )
+
+    if db.get_case(case_id) is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Investigation case not found."
+        )
+
+    event = EventStore(db).get_event_by_id(
+        case_id,
+        event_id.lower(),
+    )
+
+    if event is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Event not found."
+        )
+
+    raw_ref = event["provenance"]["raw_ref"]
+
+    raw_record = RawRecordStore(db).get_raw_record(
+        case_id,
+        raw_ref,
+    )
+
+    if raw_record is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Raw record not found for this event."
+        )
+
+    db.log_action(
+        actor="local-analyst",
+        action="RAW_EVIDENCE_READ",
+        object_id=f"{case_id}:{raw_ref}",
+        details=raw_record["raw_hash"],
+    )
+
+    return {
+        "case_id": case_id,
+        "event_id": event["provenance"]["event_id"],
+        "raw_ref": raw_ref,
+        "evidence": {
+            "sha256": raw_record["file_sha256"],
+            "channel": raw_record["channel"],
+            "record_number": raw_record["record_number"],
+        },
+        "raw_hash": raw_record["raw_hash"],
+        "raw_xml": raw_record["raw_xml"],
+    }

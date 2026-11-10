@@ -29,42 +29,46 @@ def store(tmp_path):
         (
             "a" * 64,
             100,
-            4625,
+            "4625",
             "authentication",
             "2026-10-16T19:09:00+00:00",
         ),
         (
             "a" * 64,
             101,
-            4624,
+            "4624",
             "authentication",
             "2026-10-16T19:33:00+00:00",
         ),
         (
             "b" * 64,
             200,
-            1,
+            "1",
             "process_creation",
             "2026-10-16T20:23:00+00:00",
         ),
         (
             "b" * 64,
             201,
-            11,
+            "11",
             "file_creation",
             "2026-10-16T20:35:00+00:00",
         ),
     ]
 
-    for sha256, record_id, event_id, event_type, timestamp in fixtures:
+    for sha256, record_id, event_code, event_type, timestamp in fixtures:
         event_store.add_event(
             "TEST-001",
             sha256,
             {
-                "record_id": str(record_id),
-                "event_id": event_id,
+                "event_id": f"{record_id:064x}",
+                "raw_ref": f"{sha256}:channel:{record_id}",
+                "parser_version": "0.1.0",
+                "schema_version": "0.1.0",
+                "@timestamp": timestamp,
+                "event.code": event_code,
                 "event_type": event_type,
-                "timestamp_utc": timestamp,
+                "winlog.record_id": str(record_id),
             },
         )
 
@@ -99,9 +103,9 @@ def test_filter_by_time_window(store):
     )
 
     assert result["total_events"] == 2
-    assert [e["record_id"] for e in result["events"]] == [
-        "200", "201"
-    ]
+    assert [
+        e["winlog.record_id"] for e in result["events"]
+    ] == ["200", "201"]
 
 
 def test_filter_by_evidence_hash(store):
@@ -127,12 +131,12 @@ def test_pagination(store):
 
     assert first["total_events"] == 4
     assert second["total_events"] == 4
-    assert [e["record_id"] for e in first["events"]] == [
-        "100", "101"
-    ]
-    assert [e["record_id"] for e in second["events"]] == [
-        "200", "201"
-    ]
+    assert [
+        e["winlog.record_id"] for e in first["events"]
+    ] == ["100", "101"]
+    assert [
+        e["winlog.record_id"] for e in second["events"]
+    ] == ["200", "201"]
 
 
 def test_invalid_limit_rejected(store):

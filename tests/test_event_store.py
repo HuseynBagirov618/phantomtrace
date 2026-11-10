@@ -27,15 +27,23 @@ def setup_store(tmp_path):
     return EventStore(db)
 
 
-def sample_event(record_id="100"):
+def sample_event(
+    record_id="100",
+    timestamp="2026-10-16T19:09:26+00:00",
+):
     return {
-        "record_id": record_id,
-        "event_id": 4625,
+        "event_id": f"{int(record_id):064x}",
+        "raw_ref": f"{'a' * 64}:Security:{record_id}",
+        "parser_version": "0.1.0",
+        "schema_version": "0.1.0",
+        "@timestamp": timestamp,
+        "event.code": "4625",
         "event_type": "authentication",
-        "timestamp_utc": "2026-10-16T19:09:26+00:00",
-        "source_file": "Security.evtx",
-        "username": "Stark",
-        "source_ip": "192.168.14.128",
+        "winlog.record_id": record_id,
+        "winlog.channel": "Security",
+        "user.name": "Stark",
+        "source.ip": "192.168.14.128",
+        "pt": {"parse_warnings": []},
     }
 
 
@@ -53,8 +61,9 @@ def test_insert_and_retrieve_event(setup_store):
     timeline = store.get_timeline("TEST-001")
 
     assert len(timeline) == 1
-    assert timeline[0]["event_id"] == 4625
-    assert timeline[0]["username"] == "Stark"
+    assert timeline[0]["event.code"] == "4625"
+    assert timeline[0]["winlog.record_id"] == "100"
+    assert timeline[0]["user.name"] == "Stark"
     assert timeline[0]["evidence_sha256"] == "a" * 64
 
 
@@ -83,14 +92,42 @@ def test_missing_evidence_rejected(setup_store):
         )
 
 
+def test_missing_mandatory_field_rejected(setup_store):
+    store = setup_store
+    event = sample_event()
+    del event["raw_ref"]
+
+    with pytest.raises(
+        ValueError,
+        match="Missing required event fields: raw_ref",
+    ):
+        store.add_event("TEST-001", "a" * 64, event)
+
+
+def test_event_lookup_by_deterministic_id(setup_store):
+    store = setup_store
+    event = sample_event()
+
+    store.add_event("TEST-001", "a" * 64, event)
+
+    found = store.get_event_by_id(
+        "TEST-001", event["event_id"]
+    )
+
+    assert found["event"]["event_id"] == event["event_id"]
+    assert found["provenance"]["raw_ref"] == event["raw_ref"]
+    assert found["provenance"]["event_record_id"] == 100
+
+
 def test_chronological_order(setup_store):
     store = setup_store
 
-    later = sample_event("200")
-    later["timestamp_utc"] = "2026-10-16T20:00:00+00:00"
-
-    earlier = sample_event("100")
-    earlier["timestamp_utc"] = "2026-10-16T19:00:00+00:00"
+    later = sample_event(
+        "200", timestamp="2026-10-16T20:00:00+00:00"
+    )
+    earlier = sample_event(
+        "100", timestamp="2026-10-16T19:00:00+00:00"
+    )
 
     store.add_event("TEST-001", "a" * 64, later)
     store.add_event("TEST-001", "a" * 64, earlier)
@@ -98,5 +135,5 @@ def test_chronological_order(setup_store):
     timeline = store.get_timeline("TEST-001")
 
     assert [
-        e["record_id"] for e in timeline
+        e["winlog.record_id"] for e in timeline
     ] == ["100", "200"]
