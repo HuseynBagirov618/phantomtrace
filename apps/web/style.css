@@ -1,0 +1,38 @@
+:root { color-scheme: dark; font-family: system-ui, sans-serif; background: #11171b; color: #e9f0ee; line-height: 1.5; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+.masthead { background: #162525; border-bottom: 1px solid #375450; padding: 2.2rem max(5vw, 1rem) 1.8rem; }
+.masthead span { color: #8ed8c5; letter-spacing: .15em; font: 600 .73rem ui-monospace, monospace; }
+h1 { margin: .3rem 0 0; font-size: clamp(2rem, 6vw, 3.5rem); line-height: 1.15; }
+h2 { font-size: 1.2rem; margin: 0 0 .8rem; }
+h3 { font-size: 1rem; }
+main { max-width: 88rem; margin: auto; padding: 1rem max(3vw, 1rem) 3rem; }
+.panel { background: #1b2428; border: 1px solid #35444a; border-radius: .6rem; margin: 1rem 0; padding: clamp(.8rem, 2vw, 1.35rem); }
+.toolbar, .section-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: .8rem; justify-content: space-between; }
+.toolbar { justify-content: flex-start; padding: .5rem 0; }
+button, select, input, textarea { font: inherit; color: inherit; background: #202f33; border: 1px solid #55716e; border-radius: .3rem; padding: .35rem .6rem; }
+input[type=file] { max-width: 100%; }
+textarea { display: block; width: min(100%, 44rem); font-family: ui-monospace, monospace; }
+button, summary { cursor: pointer; }
+button:hover, button:focus-visible { background: #304843; }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: #8ed8c5; color: #14241f; font-weight: 700; }
+button.primary:hover { background: #b0e5d7; }
+form > * { margin: .2rem .4rem .2rem 0; }
+details { margin: .5rem 0; }
+details > :not(summary) { margin-left: .75rem; }
+a { color: #a6e3d3; }
+table { border-collapse: collapse; min-width: 45rem; width: 100%; }
+.table-wrap { overflow-x: auto; }
+td, th { text-align: left; padding: .5rem; border-bottom: 1px solid #35444a; overflow-wrap: anywhere; }
+li { margin: .35rem 0; overflow-wrap: anywhere; }
+.tag { display: inline-block; font-size: .8em; border: 1px solid #68827d; border-radius: .25rem; padding: 0 .35rem; }
+.muted { color: #b4c6c4; }
+dialog { width: min(54rem, 95vw); max-height: 88vh; padding: 1.2rem; background: #1b2428; color: inherit; border: 1px solid #55716e; border-radius: .65rem; }
+dialog::backdrop { background: #05090bce; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #11171b; padding: .8rem; }
+svg { display: block; width: 100%; min-width: 29rem; }
+svg text { fill: #e9f0ee; font-size: 12px; }
+svg line { stroke: #8ed8c5; stroke-width: 1.5; }
+svg .rejected { stroke: #e2af92; stroke-dasharray: 5; }
+svg rect, svg circle, svg polygon { fill: #25413d; stroke: #8ed8c5; }

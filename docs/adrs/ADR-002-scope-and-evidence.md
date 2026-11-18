@@ -1,0 +1,11 @@
+# ADR 002 · Scope and evidence limits
+
+The four week Windows MVP is the current delivery scope. The v3 blueprint is the reference for later capabilities.
+
+- Dispatch by embedded Windows channel and provider. Store all recoverable XML and mark record failures with a record number or physical byte offset where available. Fatal parse errors receive a distinct audited failure state. Event parser version 0.2.0 creates new versioned IDs on re-ingest. The current timeline shows the latest normalized row for each raw locator and older exact IDs still resolve.
+- Use event identity from the source hash, channel, record number, and parser and schema versions. A locator only identifies a raw record in its original file. A second export can overlap with the first, so repeated identifiers are marked ambiguous.
+- Treat an individual export as an evidence file boundary. It cannot establish a shared boot or rule out restarts. Use System starts to bracket a boot, or a verified per-host interval with a reference. A file scoped ProcessGuid link can describe observations from the same file with an explicit boot coverage limitation.
+- Match exact host plus boot scope, canonical LogonId or GUID, and strictly increasing UTC timestamps. Reject ambiguous hard links. The session link window is 12 hours. The failure burst is five matching observations in five minutes, and the chain must complete within 15 minutes of the first supporting failure. No PID or time-only fallback is used. Thresholds are development defaults pending lab validation.
+- Match scheduled task observations to a session by SubjectLogonId. A client PID or a nearby command is insufficient for a process-to-task edge. Keep source account disagreements visible.
+- Store review decisions and analysis runs separately from observations. A review replays the saved evidence snapshot with the latest decisions and publishes its diff. The newest decision for an edge controls its review state. A confirmation does not create an association or restore one that was absent from the original graph.
+- A zero event count is a coverage gap. A verified logging policy is an analyst attestation, which is independent of the number of events observed. Behavior mappings use ATT&CK 17.1 and are indicators only.

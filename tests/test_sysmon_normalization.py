@@ -76,7 +76,7 @@ def test_file_creation():
 
 
 def test_unsupported_event():
-    event = make_event(3, {})
+    event = make_event(99, {})
 
     assert normalize_sysmon_event(event) is None
 

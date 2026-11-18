@@ -63,6 +63,11 @@ class PhantomTraceDB:
                     details TEXT
                 );
 
+                CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit_log
+                BEGIN SELECT RAISE(ABORT, 'Audit log is append only'); END;
+                CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit_log
+                BEGIN SELECT RAISE(ABORT, 'Audit log is append only'); END;
+
                 CREATE INDEX IF NOT EXISTS idx_audit_object
                     ON audit_log(object_id);
             """)

@@ -9,12 +9,13 @@ from phantomtrace.normalization.common import (
 
 SYSMON_EVENT_TYPES = {
     "1": "process_creation",
+    "3": "network_connection",
     "11": "file_creation",
 }
 
 
 def normalize_sysmon_event(event):
-    """Normalize Sysmon Event IDs 1 and 11.
+    """Normalize Sysmon Event IDs 1, 3, and 11.
 
     GUIDs are the join keys; PIDs and image paths stay supporting evidence.
     Return None for unsupported events.
@@ -73,6 +74,15 @@ def normalize_sysmon_event(event):
         missing_field(
             warnings, "process.parent.entity_id", parent_guid
         )
+
+    elif event_code == "3":
+        normalized.update({
+            "source.ip": normalize_text(fields.get("SourceIp")),
+            "destination.ip": normalize_text(fields.get("DestinationIp")),
+            "destination.port": normalize_text(fields.get("DestinationPort")),
+            "network.transport": normalize_text(fields.get("Protocol")),
+        })
+        missing_field(warnings, "destination.ip", normalized["destination.ip"])
 
     elif event_code == "11":
         file_path = normalize_text(fields.get("TargetFilename"))

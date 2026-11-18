@@ -35,7 +35,7 @@ def test_failed_rdp_authentication():
     assert result["winlog.channel"] == "Security"
     assert result["winlog.record_id"] == "100"
     assert result["winlog.logon.id"] is None
-    assert "missing field: winlog.logon.id" in (
+    assert "missing field: winlog.logon.id" not in (
         result["pt"]["parse_warnings"]
     )
 

@@ -76,6 +76,11 @@ class EventStore:
             """)
 
             conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_events_locator
+                ON events(case_id, raw_ref, id)
+            """)
+
+            conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_events_evidence
                 ON events(
                     case_id,
@@ -178,7 +183,7 @@ class EventStore:
                     record_id,
                     normalized_json
                 FROM events
-                WHERE case_id = ?
+                WHERE case_id = ? AND NOT EXISTS (SELECT 1 FROM events AS newer WHERE newer.case_id = events.case_id AND newer.raw_ref = events.raw_ref AND newer.id > events.id)
                 ORDER BY
                     timestamp_utc,
                     evidence_sha256,
@@ -224,7 +229,7 @@ class EventStore:
         if offset < 0:
             raise ValueError("Offset must be non-negative")
 
-        conditions = ["case_id = ?"]
+        conditions = ["case_id = ?", "NOT EXISTS (SELECT 1 FROM events AS newer WHERE newer.case_id = events.case_id AND newer.raw_ref = events.raw_ref AND newer.id > events.id)"]
         parameters = [case_id]
 
         if start_utc is not None:
@@ -331,6 +336,8 @@ class EventStore:
                     er.case_id = ?
                     AND er.evidence_sha256 = ?
                     AND er.record_id = ?
+                ORDER BY er.id DESC
+                LIMIT 1
                 """,
                 (
                     case_id,

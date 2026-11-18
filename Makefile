@@ -1,11 +1,17 @@
+.PHONY: test run demo eval
+
+PYTHON ?= python
+MANIFEST ?= datasets/manifests/evaluation.json
+SPLIT ?= development
+
 test:
-	PYTHONPATH=src:. pytest
+	PYTHONPATH=src:. $(PYTHON) -m pytest
 
 run:
-	PYTHONPATH=src:. uvicorn apps.api.main:app --reload
+	PYTHONPATH=src:. $(PYTHON) -m uvicorn apps.api.main:app --host 127.0.0.1
 
 demo:
-	@echo "Demo command will be implemented later."
+	PYTHONPATH=src:. $(PYTHON) -m phantomtrace.investigation.cli demo
 
 eval:
-	@echo "Evaluation command will be implemented later."
+	PYTHONPATH=src:. $(PYTHON) -m phantomtrace.investigation.cli eval "$(MANIFEST)" --split "$(SPLIT)"

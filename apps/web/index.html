@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PhantomTrace</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script type="module" src="/assets/app.js"></script>
+</head>
+<body>
+  <header class="masthead"><div><span>WINDOWS EVIDENCE WORKBENCH</span><h1>PhantomTrace</h1></div></header>
+  <main>
+    <section aria-label="Case controls" class="toolbar">
+      <label for="cases">Investigation case</label><select id="cases"></select>
+      <details><summary>New case</summary>
+        <form id="create"><label>Case ID <input name="case_id" required maxlength="64" pattern="[A-Za-z0-9_\\-]+"></label>
+        <label>Name <input name="name" required maxlength="150"></label><button>Create</button></form>
+      </details>
+    </section>
+    <p id="status" role="status"></p>
+    <div id="workspace" hidden>
+      <section class="panel">
+        <h2>Evidence</h2>
+        <form id="upload"><label>Windows event logs <input name="file" type="file" accept=".evtx" multiple required></label><button>Upload and ingest</button></form>
+        <details><summary>Boot ranges and logging policy</summary>
+          <form id="config">
+            <label>Analysis configuration <textarea rows="8" spellcheck="false" placeholder='{"boot_ranges": [], "verified_policy": {}}'></textarea></label>
+            <p>Supply a verified UTC interval per host and a reference to the evidence or manifest that establishes it. See the <a href="/docs">API schema</a>.</p>
+            <button>Save configuration and analyze</button>
+          </form>
+        </details>
+        <button id="analyze" class="primary" type="button">Run analysis</button>
+        <ul id="evidence-status"></ul>
+      </section>
+      <section class="panel">
+        <div class="section-head"><h2>Timeline</h2><div><button id="prev">Previous</button> <button id="next">Next</button></div></div>
+        <form id="timeline-filter">
+          <label>Observation type <select name="event_type">
+            <option value="">All observations</option>
+            <option value="authentication">Authentication</option>
+            <option value="process_creation">Sysmon process creation</option>
+            <option value="security_process_creation">Security process creation</option>
+            <option value="file_creation">File creation</option>
+            <option value="network_connection">Network connection</option>
+            <option value="scheduled_task_creation">Scheduled task</option>
+            <option value="powershell_script_block">PowerShell script block</option>
+            <option value="boot_started">Windows startup</option>
+          </select></label>
+          <button>Filter</button>
+        </form>
+        <div class="table-wrap"><table><thead><tr><th>UTC time</th><th>Host</th><th>Event</th><th>Observation</th><th>Source</th><th>Evidence</th></tr></thead><tbody id="timeline"></tbody></table></div>
+        <p id="timeline-count"></p>
+      </section>
+      <section class="panel"><h2>Coverage</h2><div id="coverage"></div></section>
+      <section class="panel"><div class="section-head"><h2>Incident candidates</h2><nav id="exports" aria-label="Exports"></nav></div><div id="incidents"></div></section>
+      <section class="panel"><h2>Indicators</h2><div id="hits"></div></section>
+      <section class="panel"><h2>Review history</h2><div id="history"></div></section>
+    </div>
+    <dialog id="drawer"><div class="section-head"><h2 id="drawer-title"></h2><form method="dialog"><button>Close</button></form></div><div id="drawer-body"></div></dialog>
+  </main>
+</body>
+</html>

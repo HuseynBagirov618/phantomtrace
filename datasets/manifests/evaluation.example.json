@@ -1,0 +1,21 @@
+{
+  "scenarios": [
+    {
+      "name": "replace-with-scenario-name",
+      "split": "development",
+      "sources": [
+        {
+          "path": "path/to/sanitized/Security.evtx",
+          "sha256": "replace-with-the-original-file-sha256"
+        }
+      ],
+      "config": {
+        "boot_ranges": [],
+        "verified_policy": {}
+      },
+      "detections": [],
+      "edges": [],
+      "incident_groups": []
+    }
+  ]
+}

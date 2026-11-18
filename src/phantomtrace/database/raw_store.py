@@ -44,6 +44,12 @@ class RawRecordStore:
                 """
             )
 
+            conn.executescript("""
+                CREATE TRIGGER IF NOT EXISTS raw_no_update BEFORE UPDATE ON raw_records
+                BEGIN SELECT RAISE(ABORT, 'Raw records are append only'); END;
+                CREATE TRIGGER IF NOT EXISTS raw_no_delete BEFORE DELETE ON raw_records
+                BEGIN SELECT RAISE(ABORT, 'Raw records are append only'); END;
+            """)
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_raw_records_evidence

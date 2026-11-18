@@ -42,7 +42,8 @@ def normalize_auth_event(event):
 
     warnings = []
     missing_field(warnings, "@timestamp", timestamp)
-    missing_field(warnings, "winlog.logon.id", logon_id)
+    if event_code == "4624":
+        missing_field(warnings, "winlog.logon.id", logon_id)
     missing_field(warnings, "user.name", username)
 
     return {
@@ -64,6 +65,7 @@ def normalize_auth_event(event):
         ),
         "source.ip": source_ip,
         "user.name": username,
+        "user.sid": normalize_text(fields.get("TargetUserSid")),
         "user.domain": normalize_text(fields.get("TargetDomainName")),
         "error.code": normalize_text(fields.get("Status")),
         "error.substatus": normalize_text(fields.get("SubStatus")),

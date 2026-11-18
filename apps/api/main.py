@@ -5,7 +5,12 @@ import tempfile
 
 from datetime import datetime, timezone
 
-from fastapi import Query
+from fastapi import Query, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.responses import JSONResponse
+from apps.api.investigation import build_router
 from phantomtrace.database.event_store import EventStore
 from phantomtrace.database.raw_store import RawRecordStore
 from phantomtrace.ingestion.service import EvidenceIngestionService
@@ -17,6 +22,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from phantomtrace.database.db import PhantomTraceDB
+from phantomtrace.schema.identity import raw_xml_hash
 
 
 app = FastAPI(
@@ -30,8 +36,34 @@ db = PhantomTraceDB()
 
 storage = EvidenceStorage()
 
+app.include_router(build_router(lambda: db))
+
+
+@app.get("/cases")
+def list_cases():
+    with db.connect() as conn:
+        return [dict(row) for row in conn.execute("SELECT * FROM cases ORDER BY created_at DESC")]
+
 MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100 MiB
 EVTX_SIGNATURE = b"ElfFile\x00"
+
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])
+
+
+@app.middleware("http")
+async def require_local_writes(request: Request, call_next):
+    if request.method == "POST":
+        origin = request.headers.get("origin")
+        if origin and origin != f"{request.url.scheme}://{request.headers.get('host')}":
+            return JSONResponse({"detail": "Cross-origin writes are disabled."}, status_code=403)
+        if request.url.path.endswith("/evidence"):
+            length = request.headers.get("content-length")
+            if length is None or not length.isdecimal():
+                return JSONResponse({"detail": "Upload requires a Content-Length."}, status_code=411)
+            if len(length) > 10 or int(length) > MAX_UPLOAD_SIZE + 65536:
+                return JSONResponse({"detail": "Evidence exceeds the 100 MiB limit."}, status_code=413)
+    return await call_next(request)
+
 
 class CaseCreateRequest(BaseModel):
     case_id: str = Field(
@@ -96,7 +128,7 @@ def get_case(case_id: str):
     return case
 
 @app.post("/cases/{case_id}/evidence", status_code=201)
-async def upload_evidence(
+def upload_evidence(
     case_id: str,
     file: UploadFile = File(...)
 ):
@@ -134,7 +166,7 @@ async def upload_evidence(
         )
 
     # 3. Stream the upload into a temporary file.
-    upload_dir = Path("data/uploads")
+    upload_dir = storage.base_path.parent / "uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
 
     temp_path = None
@@ -152,7 +184,7 @@ async def upload_evidence(
             temp_path = Path(temporary.name)
 
             while True:
-                chunk = await file.read(1024 * 1024)
+                chunk = file.file.read(1024 * 1024)
 
                 if not chunk:
                     break
@@ -209,7 +241,7 @@ async def upload_evidence(
         }
 
     finally:
-        await file.close()
+        file.file.close()
 
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
@@ -314,7 +346,7 @@ def ingest_evidence(case_id: str, sha256: str):
         # are reported as conflicts rather than server errors.
         raise HTTPException(
             status_code=409,
-            detail=str(error)
+            detail={"status": "FAILED_WITH_REASON", "reason": str(error), "sha256": sha256},
         ) from error
 
     return result
@@ -383,46 +415,8 @@ def get_case_timeline(
             status_code=422,
             detail=str(error),
         ) from error
-    """
-    Retrieve a chronological forensic timeline.
 
-    Pagination is applied after retrieving the events
-    from SQLite in the current MVP implementation.
-    """
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", case_id):
-        raise HTTPException(
-            status_code=422,
-            detail="Invalid case ID."
-        )
 
-    if db.get_case(case_id) is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Investigation case not found."
-        )
-
-    if not 1 <= limit <= 1000:
-        raise HTTPException(
-            status_code=422,
-            detail="Limit must be between 1 and 1000."
-        )
-
-    if offset < 0:
-        raise HTTPException(
-            status_code=422,
-            detail="Offset must be non-negative."
-        )
-
-    store = EventStore(db)
-    events = store.get_timeline(case_id)
-
-    return {
-        "case_id": case_id,
-        "total_events": len(events),
-        "limit": limit,
-        "offset": offset,
-        "events": events[offset:offset + limit],
-    }
 @app.get("/cases/{case_id}/evidence/{sha256}/events/{record_id}")
 def get_evidence_event(
     case_id: str,
@@ -522,6 +516,10 @@ def get_event_raw(case_id: str, event_id: str):
             detail="Raw record not found for this event."
         )
 
+    if raw_xml_hash(raw_record["raw_xml"]) != raw_record["raw_hash"]:
+        db.log_action("local-analyst", "RAW_EVIDENCE_HASH_MISMATCH", f"{case_id}:{raw_ref}")
+        raise HTTPException(409, "Stored raw record failed SHA-256 verification.")
+
     db.log_action(
         actor="local-analyst",
         action="RAW_EVIDENCE_READ",
@@ -541,3 +539,15 @@ def get_event_raw(case_id: str, event_id: str):
         "raw_hash": raw_record["raw_hash"],
         "raw_xml": raw_record["raw_xml"],
     }
+
+WEB_ROOT = Path(__file__).resolve().parents[1] / "web"
+app.mount("/assets", StaticFiles(directory=WEB_ROOT), name="web_assets")
+
+
+@app.get("/", include_in_schema=False)
+def investigation_ui():
+    return FileResponse(WEB_ROOT / "index.html", headers={
+        "Content-Security-Policy": "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+    })

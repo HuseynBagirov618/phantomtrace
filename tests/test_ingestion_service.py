@@ -147,7 +147,7 @@ def test_unsupported_events_still_keep_raw_custody(
     db, storage, service, sha256 = environment
 
     unsupported = make_event(150)
-    unsupported["event_id"] = "4688"
+    unsupported["event_id"] = "9999"
 
     monkeypatch.setattr(
         ingestion_module,
@@ -230,3 +230,16 @@ def test_unregistered_evidence_rejected(environment):
 
     with pytest.raises(ValueError, match="not registered"):
         service.ingest("TEST-001", "b" * 64)
+
+
+def test_bad_record_does_not_discard_other_records(environment, monkeypatch):
+    db, _, service, sha256 = environment
+    broken = make_event(100) | {"timestamp": "invalid", "offset": 4096}
+    monkeypatch.setattr(ingestion_module, "parse_evtx", lambda path: iter([broken, make_event(101)]))
+
+    result = service.ingest("TEST-001", sha256)
+
+    assert result["status"] == "PARTIAL"
+    assert result["errors"][0]["offset"] == 4096
+    assert result["inserted_events"] == 1
+    assert RawRecordStore(db).count_raw_records("TEST-001", sha256) == 2
