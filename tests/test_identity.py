@@ -48,7 +48,7 @@ def test_event_id_changes_with_parser_version():
     locator = record_locator(SHA256, "Security", 100)
 
     assert build_event_id(
-        SHA256, locator, parser_version="0.2.0"
+        SHA256, locator, parser_version="9.0.0"
     ) != build_event_id(SHA256, locator)
 
 

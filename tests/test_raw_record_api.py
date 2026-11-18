@@ -174,8 +174,9 @@ def test_missing_raw_record_returns_404(environment):
     ).json()["events"][0]
 
     # Simulate a custody failure: the normalized event exists but its
-    # raw record was lost.
+    # raw record was lost outside the application.
     with db.connect() as conn:
+        conn.execute("DROP TRIGGER raw_no_delete")
         conn.execute(
             "DELETE FROM raw_records WHERE case_id = ?",
             ("TEST-001",),

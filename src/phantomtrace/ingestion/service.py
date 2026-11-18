@@ -1,22 +1,38 @@
 import json
 import re
+import subprocess
+import sys
+import tempfile
 from datetime import datetime, timezone
 
 from phantomtrace.database.event_store import EventStore
 from phantomtrace.database.raw_store import RawRecordStore
-from phantomtrace.normalization.auth import normalize_auth_event
-from phantomtrace.normalization.powershell import normalize_powershell_event
-from phantomtrace.normalization.sysmon import normalize_sysmon_event
-from phantomtrace.parsers.evtx_parser import parse_evtx
+from phantomtrace.normalization.windows import normalize_windows_event
 from phantomtrace.schema.identity import build_event_id, record_locator
 from phantomtrace.schema.versions import PARSER_VERSION, SCHEMA_VERSION
 
 
-NORMALIZERS = {
-    "Security.evtx": normalize_auth_event,
-    "Sysmon.evtx": normalize_sysmon_event,
-    "PowerShell.evtx": normalize_powershell_event,
-}
+MAX_PARSER_OUTPUT = 256 * 1024 * 1024
+
+
+def parse_evtx(path):
+    """Parse in a separate process with a timeout and bounded output."""
+    with tempfile.TemporaryFile() as output:
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "phantomtrace.parsers.evtx_parser", path],
+                stdout=output, stderr=subprocess.PIPE, timeout=60, check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise ValueError("EVTX parser timed out") from error
+        if result.returncode:
+            reason = result.stderr.decode(errors="replace").strip() or "worker terminated"
+            raise ValueError(f"EVTX parser failed: {reason}")
+        if output.tell() > MAX_PARSER_OUTPUT:
+            raise ValueError("EVTX parser output limit exceeded")
+        output.seek(0)
+        for line in output:
+            yield json.loads(line)
 
 
 class EvidenceIngestionService:
@@ -29,6 +45,18 @@ class EvidenceIngestionService:
         self.raw_records = RawRecordStore(db)
 
     def ingest(self, case_id, evidence_sha256):
+        try:
+            return self._ingest(case_id, evidence_sha256)
+        except ValueError as error:
+            if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", case_id) and re.fullmatch(r"[a-fA-F0-9]{64}", evidence_sha256):
+                self.db.log_action(
+                    "local-analyst", "EVIDENCE_INGEST_FAILED", f"{case_id}:{evidence_sha256.lower()}",
+                    json.dumps({"status": "FAILED_WITH_REASON", "reason": str(error),
+                                "parser_version": PARSER_VERSION}),
+                )
+            raise
+
+    def _ingest(self, case_id, evidence_sha256):
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", case_id):
             raise ValueError("Invalid case ID")
 
@@ -51,8 +79,6 @@ class EvidenceIngestionService:
             raise ValueError("Evidence is not registered")
 
         filename = record["source_name"]
-        if filename not in NORMALIZERS:
-            raise ValueError(f"Unsupported evidence source: {filename}")
 
         # Check the stored evidence before parsing it.
         if not self.storage.verify_evidence(case_id, evidence_sha256):
@@ -65,12 +91,14 @@ class EvidenceIngestionService:
             / evidence_sha256
         )
 
-        normalizer = NORMALIZERS[filename]
         parsed_count = 0
         supported_count = 0
         inserted_count = 0
         raw_inserted_count = 0
         raw_duplicate_count = 0
+
+        errors = []
+        channels = set()
 
         # Raw records and normalized events are written in one
         # transaction. If a record fails, SQLite rolls back the whole
@@ -78,20 +106,27 @@ class EvidenceIngestionService:
         with self.db.connect() as conn:
             for raw_event in parse_evtx(str(evidence_path)):
                 parsed_count += 1
+                if raw_event.get("parse_error"):
+                    errors.append({key: raw_event.get(key) for key in ("parse_error", "offset", "record_id")})
+                    continue
 
                 # The stored file is named by its SHA-256; restore the
                 # registered original filename in normalized metadata.
                 raw_event["source_file"] = filename
 
-                record_number = self._record_number(raw_event)
-                channel = self._channel(raw_event)
-                raw_xml = raw_event.get("raw_xml")
-
-                if raw_xml is None or not str(raw_xml).strip():
-                    raise ValueError(
-                        "Parsed record "
-                        f"{record_number} has no raw XML"
-                    )
+                try:
+                    record_number = self._record_number(raw_event)
+                    if record_number < 0:
+                        raise ValueError("Negative record number")
+                    channel = self._channel(raw_event)
+                    raw_xml = raw_event.get("raw_xml")
+                    if not raw_xml or not raw_xml.strip():
+                        raise ValueError("Missing raw XML")
+                except (TypeError, ValueError) as error:
+                    errors.append({"record_id": raw_event.get("record_id"), "offset": raw_event.get("offset"),
+                                   "parse_error": str(error)})
+                    continue
+                channels.add(channel)
 
                 locator = record_locator(
                     evidence_sha256,
@@ -111,17 +146,17 @@ class EvidenceIngestionService:
                 else:
                     raw_duplicate_count += 1
 
-                event = normalizer(raw_event)
-
-                if event is None:
+                try:
+                    event = normalize_windows_event(raw_event)
+                    if event is None:
+                        continue
+                    if not event.get("@timestamp"):
+                        raise ValueError("Normalized event has no timestamp")
+                except (TypeError, ValueError, OverflowError) as error:
+                    errors.append({"record_id": record_number, "offset": raw_event.get("offset"),
+                                   "parse_error": str(error)})
                     continue
-
                 supported_count += 1
-
-                if not event.get("@timestamp"):
-                    raise ValueError(
-                        "Normalized event has no timestamp"
-                    )
 
                 event["event_id"] = build_event_id(
                     evidence_sha256,
@@ -174,6 +209,8 @@ class EvidenceIngestionService:
                         "raw_duplicate": raw_duplicate_count,
                         "parser_version": PARSER_VERSION,
                         "schema_version": SCHEMA_VERSION,
+                        "channels": sorted(channels),
+                        "errors": errors,
                     }),
                 ),
             )
@@ -182,6 +219,9 @@ class EvidenceIngestionService:
             "case_id": case_id,
             "filename": filename,
             "evidence_sha256": evidence_sha256,
+            "status": "PARTIAL" if errors else "SUCCESS",
+            "errors": errors,
+            "channels": sorted(channels),
             "parsed_records": parsed_count,
             "supported_events": supported_count,
             "inserted_events": inserted_count,
